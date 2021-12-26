@@ -8,81 +8,184 @@
 import SpriteKit
 import GameplayKit
 
-class GameScene: SKScene {
+class GameScene: SKScene, SKPhysicsContactDelegate {
     
-    private var label : SKLabelNode?
-    private var spinnyNode : SKShapeNode?
+    var starfield: SKEmitterNode!
+    var player: SKSpriteNode!
+    var scoreLabel: SKLabelNode!
+    
+    var score = 0 {
+        didSet {
+            scoreLabel.text = "Score: \(score)"
+        }
+    }
+    
+    let possibleEnemies = ["ball", "hammer", "tv"]
+    var isGameOver = false
+    var gameTimer: Timer?
+    var draggingPlayer = false
+    
+    var totalEnemies = 0 {
+        didSet {
+            updateTimer()
+        }
+    }
     
     override func didMove(to view: SKView) {
-        
-        // Get label node from scene and store it for use later
-        self.label = self.childNode(withName: "//helloLabel") as? SKLabelNode
-        if let label = self.label {
-            label.alpha = 0.0
-            label.run(SKAction.fadeIn(withDuration: 2.0))
-        }
-        
-        // Create shape node to use during mouse interaction
-        let w = (self.size.width + self.size.height) * 0.05
-        self.spinnyNode = SKShapeNode.init(rectOf: CGSize.init(width: w, height: w), cornerRadius: w * 0.3)
-        
-        if let spinnyNode = self.spinnyNode {
-            spinnyNode.lineWidth = 2.5
-            
-            spinnyNode.run(SKAction.repeatForever(SKAction.rotate(byAngle: CGFloat(Double.pi), duration: 1)))
-            spinnyNode.run(SKAction.sequence([SKAction.wait(forDuration: 0.5),
-                                              SKAction.fadeOut(withDuration: 0.5),
-                                              SKAction.removeFromParent()]))
-        }
+        setupBackground()
+        setupStarField()
+        setupPlayer()
+        setupScoreLabel()
+        setupPhysics()
+        initTimer()
     }
     
-    
-    func touchDown(atPoint pos : CGPoint) {
-        if let n = self.spinnyNode?.copy() as! SKShapeNode? {
-            n.position = pos
-            n.strokeColor = SKColor.green
-            self.addChild(n)
+    override func update(_ currentTime: TimeInterval) {
+        for node in children where node.position.x < -300 {
+            node.removeFromParent()
         }
-    }
-    
-    func touchMoved(toPoint pos : CGPoint) {
-        if let n = self.spinnyNode?.copy() as! SKShapeNode? {
-            n.position = pos
-            n.strokeColor = SKColor.blue
-            self.addChild(n)
-        }
-    }
-    
-    func touchUp(atPoint pos : CGPoint) {
-        if let n = self.spinnyNode?.copy() as! SKShapeNode? {
-            n.position = pos
-            n.strokeColor = SKColor.red
-            self.addChild(n)
+        
+        if !isGameOver {
+            score += 1
         }
     }
     
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-        if let label = self.label {
-            label.run(SKAction.init(named: "Pulse")!, withKey: "fadeInOut")
+        guard let touch = touches.first else {
+            return
         }
         
-        for t in touches { self.touchDown(atPoint: t.location(in: self)) }
+        let location = touch.location(in: self)
+        
+        if let node = nodes(at: location).first {
+            if node.name == "player" {
+                draggingPlayer = true
+            }
+        }
     }
     
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
-        for t in touches { self.touchMoved(toPoint: t.location(in: self)) }
+        guard let touch = touches.first else {
+            return
+        }
+        
+        var location = touch.location(in: self)
+        
+        if draggingPlayer {
+            if location.y < 100 {
+                location.y = 100
+            } else if location.y > 668 {
+                location.y = 668
+            }
+            
+            player.position = location
+        }
     }
     
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
-        for t in touches { self.touchUp(atPoint: t.location(in: self)) }
+        draggingPlayer = false
     }
     
-    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
-        for t in touches { self.touchUp(atPoint: t.location(in: self)) }
+    func didBegin(_ contact: SKPhysicsContact) {
+        guard let bodyA = contact.bodyA.node, let bodyB = contact.bodyB.node else {
+            return
+        }
+        
+        if bodyA.name == "player" || bodyB.name == "player" {
+            let explosion = SKEmitterNode(fileNamed: "explosion")!
+            explosion.position = player.position
+            
+            addChild(explosion)
+            
+            player.removeFromParent()
+            
+            isGameOver = true
+        }
     }
     
-    
-    override func update(_ currentTime: TimeInterval) {
-        // Called before each frame is rendered
+    func setupBackground() {
+        backgroundColor = .black
     }
+    
+    func setupStarField() {
+        starfield = SKEmitterNode(fileNamed: "starfield")
+        starfield.position = CGPoint(x: 1024, y: 384)
+        starfield.advanceSimulationTime(10)
+        
+        addChild(starfield)
+        
+        starfield.zPosition = -1
+    }
+    
+    func setupPlayer() {
+        player = SKSpriteNode(imageNamed: "player")
+        player.position = CGPoint(x: 100, y: 384)
+        player.physicsBody = SKPhysicsBody(texture: player.texture!, size: player.size)
+        player.physicsBody?.contactTestBitMask = 1
+        player.name = "player"
+        
+        addChild(player)
+    }
+    
+    func setupScoreLabel() {
+        scoreLabel = SKLabelNode(fontNamed: "Chalkduster")
+        scoreLabel.position = CGPoint(x: 16, y: 16)
+        scoreLabel.horizontalAlignmentMode = .left
+        
+        addChild(scoreLabel)
+    }
+    
+    func setupPhysics() {
+        physicsWorld.gravity = CGVector(dx: 0, dy: 0)
+        physicsWorld.contactDelegate = self
+    }
+    
+    func initTimer() {
+        gameTimer = Timer.scheduledTimer(timeInterval: 1, target: self, selector: #selector(createEnemy), userInfo: nil, repeats: true)
+    }
+    
+    func updateTimer() {
+        if totalEnemies % 20 != 0 {
+            return
+        }
+        
+        guard let currentTimer = gameTimer else {
+            return
+        }
+        
+        currentTimer.invalidate()
+        
+        var tick = TimeInterval(1 - (Double(totalEnemies) / 200))
+        
+        if tick < 0.4 {
+            tick = 0.4
+        }
+        
+        gameTimer = Timer.scheduledTimer(timeInterval: tick, target: self, selector: #selector(createEnemy), userInfo: nil, repeats: true)
+    }
+    
+    @objc func createEnemy() {
+        if isGameOver {
+            return
+        }
+        
+        guard let enemy = possibleEnemies.randomElement() else {
+            return
+        }
+        
+        let sprite = SKSpriteNode(imageNamed: enemy)
+        sprite.position = CGPoint(x: 1200, y: Int.random(in: 50...736))
+        
+        addChild(sprite)
+        
+        sprite.physicsBody = SKPhysicsBody(texture: sprite.texture!, size: sprite.size)
+        sprite.physicsBody?.contactTestBitMask = 1
+        sprite.physicsBody?.velocity = CGVector(dx: -500, dy: 0)
+        sprite.physicsBody?.angularVelocity = 5
+        sprite.physicsBody?.linearDamping = 0
+        sprite.physicsBody?.angularDamping = 0
+        
+        totalEnemies += 1
+    }
+    
 }
